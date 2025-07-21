@@ -1,0 +1,99 @@
+public with sharing class PDFcoController {
+
+    private static final String API_KEY = '';///your pdf.co account api key
+    private static final String TEMPLATE_ID = '';///your pdf.co template id
+
+    @AuraEnabled
+    public static String parsePdfFromBase64(String base64Pdf, String fileName) {
+        try {
+            // Step 1: Upload file to PDF.co using Base64 endpoint
+            String uploadedUrl = uploadFileBase64ToPdfCo(base64Pdf, fileName);
+
+            // Step 2: Call parser with your template and uploaded file URL
+            String parsedJson = parsePdfWithTemplate(uploadedUrl);
+
+            return parsedJson;
+        } catch (Exception e) {
+            system.debug('Error: ' + e.getMessage());
+            return 'Error: ' + e.getMessage();
+        }
+    }
+
+    // New upload method using /v1/file/upload/base64 endpoint
+    private static String uploadFileBase64ToPdfCo(String base64Pdf, String fileName) {
+        Http http = new Http();
+        HttpRequest req = new HttpRequest();
+        req.setEndpoint('https://api.pdf.co/v1/file/upload/base64');
+        req.setMethod('POST');
+        req.setHeader('x-api-key', API_KEY);
+        req.setHeader('Content-Type', 'application/json');
+
+        Map<String, Object> bodyMap = new Map<String, Object>{
+            'file' => base64Pdf,
+            'name' => fileName
+        };
+
+        req.setBody(JSON.serialize(bodyMap));
+
+        HttpResponse res = http.send(req);
+        if (res.getStatusCode() == 200) {
+            Map<String, Object> result = (Map<String, Object>) JSON.deserializeUntyped(res.getBody());
+            if (!(Boolean) result.get('error')) {
+                return (String) result.get('url');  // The temporary uploaded file URL
+            } else {
+                system.debug('PDF.co upload error:  ' + result.get('message'));
+                return 'PDF.co upload error: ' + result.get('message');
+            }
+        } else {
+            system.debug('HTTP error during upload: ' +  res.getStatusCode());
+            return 'HTTP error during upload: ' + res.getStatusCode();
+        }
+    }
+
+    private static String parsePdfWithTemplate(String fileUrl) {
+        Http http = new Http();
+        HttpRequest req = new HttpRequest();
+        req.setEndpoint('https://api.pdf.co/v1/pdf/documentparser');
+        req.setMethod('POST');
+        req.setHeader('x-api-key', API_KEY);
+        req.setHeader('Content-Type', 'application/json');
+
+        Map<String, Object> requestBody = new Map<String, Object>{
+            'templateId' => TEMPLATE_ID,
+            'url' => fileUrl,
+            'name' => 'result.json'
+        };
+
+        req.setBody(JSON.serialize(requestBody));
+
+        HttpResponse res = http.send(req);
+        if (res.getStatusCode() == 200) {
+            Map<String, Object> result = (Map<String, Object>)JSON.deserializeUntyped(res.getBody());
+            if (!(Boolean)result.get('error')) {
+                String resultUrl = (String)result.get('url');
+                return downloadResult(resultUrl);
+            } else {
+                system.debug('PDF.co parse error:  ' + result.get('message'));
+                return 'PDF.co parse error: ' + result.get('message');
+            }
+        } else {
+              system.debug('HTTP error during parse:' +  res.getStatusCode());
+            return 'HTTP error during parse: ' + res.getStatusCode();
+        }
+    }
+
+    private static String downloadResult(String resultUrl) {
+        Http http = new Http();
+        HttpRequest req = new HttpRequest();
+        req.setEndpoint(resultUrl);
+        req.setMethod('GET');
+
+        HttpResponse res = http.send(req);
+        if (res.getStatusCode() == 200) {
+            return res.getBody(); // Parsed JSON string
+        } else {
+            system.debug('Failed to download parse result: ' + res.getStatusCode());
+            return 'Failed to download parse result: ' + res.getStatusCode();
+        }
+    }
+}
